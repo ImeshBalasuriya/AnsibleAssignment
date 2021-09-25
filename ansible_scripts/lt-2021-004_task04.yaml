@@ -1,0 +1,6 @@
+- name: Update release
+  become: yes
+  become_method: sudo
+  tasks:    
+    - name: Deploy release
+      role: web-stg

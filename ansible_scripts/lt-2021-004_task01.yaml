@@ -1,0 +1,97 @@
+- name: Create Compute Engine instances
+  hosts: localhost
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  vars:
+    gcp_project: fluted-environs-318311
+    gcp_cred_kind: serviceaccount
+    gcp_cred_file: svc_account.json
+    zone: "asia-south2-a"
+    region: "asia-south2"
+    machine_type: "n1-standard-1"
+    image: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts"
+    instance_names:
+      - instance-1
+      - instance-2
+
+  tasks:
+    - name: Create IP addresses for the instances
+      gcp_compute_address:
+        name: "{{ item }}"
+        region: "{{ region }}"
+        project: "{{ gcp_project }}"
+        service_account_file: "{{ gcp_cred_file }}"
+        auth_kind: "{{ gcp_cred_kind }}"
+      register: gce_ip
+      loop: "{{ instance_names }}"
+        
+    - name: Create the instances
+      gcp_compute_instance:
+        name: "{{ item.name }}"
+        machine_type: "{{ machine_type }}"
+        disks:
+          - auto_delete: true
+            boot: true
+            initialize_params:
+              disk_size_gb: 30
+              source_image: "{{ image }}"
+        network_interfaces:
+          - access_configs:
+              - name: External NAT
+                nat_ip: "{{ item }}"
+                type: ONE_TO_ONE_NAT
+        tags:
+          items:
+            - http-server
+            - https-server
+        zone: "{{ zone }}"
+        project: "{{ gcp_project }}"
+        service_account_file: "{{ gcp_cred_file }}"
+        auth_kind: "{{ gcp_cred_kind }}"
+      register: gce
+      with_items: "{{ gce_ip.results }}"
+   
+  post_tasks:
+    - name: Wait for SSH
+      wait_for: delay=5 sleep=5 host={{ item.address }} port=22 state=started timeout=100
+      loop: "{{ gce_ip.results }}"
+
+    - name: Save host data
+      add_host: hostname={{ item.address }} groupname=gce_instances
+      loop: "{{ gce_ip.results }}"
+
+    - name: Write to hosts file
+      lineinfile:
+        path: /etc/ansible/hosts
+        line: "{{ item.name }} ansible_host={{ item.address }}"
+      loop: "{{ gce_ip.results }}"
+
+- name: Deploy Apache web server on the instances
+  hosts: gce_instances
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Install latest version of Apache
+      apt: name=apache2 update_cache=yes state=latest
+
+    - name: "UFW firewall allow HTTP on port 80"
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+
+    - name: Create index.html
+      copy:
+        dest: "/var/www/html/index.html"
+        content: |
+          <html>
+            <head><title>{{ ansible_facts['nodename'] }}</title>
+            <body><h1>Hello {{ ansible_facts['nodename'] }}</h1></body>
+          </html>
+
+  handlers:
+    - name: restart-apache
+      service:
+        name: apache2
+        state: restarted

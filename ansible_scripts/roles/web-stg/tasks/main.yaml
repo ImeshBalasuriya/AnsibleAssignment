@@ -1,0 +1,11 @@
+- name: Task 01
+  tasks:
+    - include: "../../../lt-2021-004_task01.yaml"
+
+- name: Task 02
+  hosts: localhost
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Execute the script
+      script: "../../../task02.sh"
